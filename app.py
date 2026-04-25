@@ -11,7 +11,6 @@ Deploy to Railway. Set env vars before deploying (see README below).
 import json
 import os
 import re
-import time
 import warnings
 from collections import OrderedDict
 from datetime import datetime
@@ -78,26 +77,6 @@ def connect_sheets():
     client = gspread.authorize(creds)
     return {season: client.open_by_key(sid) for season, sid in SPREADSHEET_IDS.items()}
 
-
-def load_all_tabs(spreadsheets):
-    rows_cache = {}
-    ws_cache   = {}
-    tabs_by_season = {}
-    for season, spreadsheet in spreadsheets.items():
-        rows_cache[season] = {}
-        ws_cache[season]   = {}
-        all_ws = spreadsheet.worksheets()
-        tabs_by_season[season] = [ws.title for ws in all_ws]
-        for ws in all_ws:
-            if ws.title in SKIP_TABS:
-                continue
-            try:
-                rows_cache[season][ws.title] = ws.get_all_values()
-                ws_cache[season][ws.title]   = ws
-                time.sleep(0.3)
-            except Exception as e:
-                print(f"  WARNING: could not load [{season}|{ws.title}]: {e}")
-    return rows_cache, ws_cache, tabs_by_season
 
 
 # ─── Tab routing ──────────────────────────────────────────────────────────────
@@ -347,27 +326,42 @@ def process_sale_data(sale_response):
 def find_sheet_location(sale_info):
     """
     Search both spreadsheets for the matching row.
+    Only loads the one target tab per season (not all tabs) to avoid timeouts.
     Returns (season, tab, row_idx, worksheet) or None.
     """
     spreadsheets = connect_sheets()
-    rows_cache, ws_cache, tabs_by_season = load_all_tabs(spreadsheets)
 
-    for season, available_tabs in tabs_by_season.items():
+    for season, spreadsheet in spreadsheets.items():
+        try:
+            all_ws = spreadsheet.worksheets()
+        except Exception as e:
+            print(f"  WARNING: could not list worksheets for {season}: {e}")
+            continue
+
+        available_tabs = [ws.title for ws in all_ws]
         tab = find_tab(
             sale_info["event_name"], sale_info["venue_name"],
             sale_info["event_type"], available_tabs,
         )
-        if not tab or tab not in rows_cache[season]:
+        if not tab:
             continue
+
+        try:
+            ws = spreadsheet.worksheet(tab)
+            rows = ws.get_all_values()
+        except Exception as e:
+            print(f"  WARNING: could not load [{season}|{tab}]: {e}")
+            continue
+
         row_idx = find_row(
-            rows_cache[season][tab],
+            rows,
             sale_info["event_date"],
             sale_info["section"],
             sale_info["row"],
             sale_info["seats"],
         )
         if row_idx is not None:
-            return season, tab, row_idx, ws_cache[season][tab]
+            return season, tab, row_idx, ws
 
     return None
 
