@@ -163,8 +163,10 @@ def get_usd_to_cad():
 def to_cad(amount_cents, is_canadian, is_ticketmaster, rate):
     dollars = amount_cents / 100
     if is_canadian and not is_ticketmaster:
-        return round(dollars * rate, 2)
-    return round(dollars, 2)
+        converted = dollars * rate
+    else:
+        converted = dollars
+    return round(round(converted / 5) * 5, 2)
 
 
 # ─── Sheet update ─────────────────────────────────────────────────────────────
@@ -384,7 +386,7 @@ def build_whatsapp_message(sale_info, season, tab, row_idx):
         f"💰 ${sale_info['price_cad']:,.2f} CAD\n"
         f"🏪 {sale_info['source']}\n"
         f"━━━━━━━━━━━━━━━━\n"
-        f"📊 Sheet: {season} › {tab} (row {row_idx + 1})\n\n"
+        f"📊 Sheet: {season} › {tab} (sheet row {row_idx + 1})\n\n"
         f"Reply *Y* to log it or *N* to skip."
     )
 
@@ -487,7 +489,7 @@ def twilio_reply():
             del pending_sales[sale_id]
             resp.message(
                 f"✅ *Logged!*\n"
-                f"{tab} | Row {row_idx + 1}\n"
+                f"{tab} | Sheet row {row_idx + 1}\n"
                 f"Qty left: {new_left} | ${new_price:,.2f} CAD\n"
                 f"Source: {new_src}"
             )
