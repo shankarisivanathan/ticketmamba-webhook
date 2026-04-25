@@ -393,57 +393,66 @@ def build_whatsapp_message(sale_info, season, tab, row_idx):
 
 @app.route("/webhook/automatiq", methods=["POST"])
 def automatiq_webhook():
-    payload = request.json or {}
-    print(f"[Automatiq] Received webhook: {json.dumps(payload)[:300]}")
+    try:
+        payload = request.json or {}
+        print(f"[Automatiq] Received webhook: {json.dumps(payload)[:300]}")
 
-    sale_id = extract_sale_id(payload)
-    if not sale_id:
-        print("[Automatiq] Could not extract sale ID from payload — logging raw payload.")
+        sale_id = extract_sale_id(payload)
+        if not sale_id:
+            print("[Automatiq] Could not extract sale ID from payload — logging raw payload.")
+            return "", 200
+
+        if sale_id in pending_sales:
+            print(f"[Automatiq] Sale {sale_id} already pending, ignoring duplicate.")
+            return "", 200
+
+        # Fetch full sale details
+        sale_response = fetch_sale_by_id(sale_id)
+        if not sale_response:
+            print(f"[Automatiq] Could not fetch sale {sale_id}")
+            return "", 200
+
+        sale_info = process_sale_data(sale_response)
+        if not sale_info:
+            print(f"[Automatiq] Could not parse sale {sale_id}")
+            return "", 200
+
+        print(f"[Automatiq] Parsed: {sale_info['event_name']} | {sale_info['event_date']} | Sec {sale_info['section']} Row {sale_info['row']}")
+
+        # Find matching sheet location
+        location = find_sheet_location(sale_info)
+        if not location:
+            print(f"[Automatiq] No sheet row found for sale {sale_id} — skipping WhatsApp.")
+            return "", 200
+
+        season, tab, row_idx, worksheet = location
+
+        # Build and send WhatsApp
+        msg = build_whatsapp_message(sale_info, season, tab, row_idx)
+
+        # Only send WhatsApp if no other sale is pending (queue them)
+        was_empty = len(pending_sales) == 0
+        pending_sales[sale_id] = {
+            "sale_info":  sale_info,
+            "season":     season,
+            "tab":        tab,
+            "row_idx":    row_idx,
+            "message":    msg,
+        }
+
+        if was_empty:
+            send_whatsapp(msg)
+            print(f"[Automatiq] WhatsApp sent for {sale_id} ({tab} row {row_idx + 1})")
+        else:
+            print(f"[Automatiq] Sale {sale_id} queued ({len(pending_sales)} pending)")
+
         return "", 200
 
-    if sale_id in pending_sales:
-        print(f"[Automatiq] Sale {sale_id} already pending, ignoring duplicate.")
-        return "", 200
-
-    # Fetch full sale details
-    sale_response = fetch_sale_by_id(sale_id)
-    if not sale_response:
-        print(f"[Automatiq] Could not fetch sale {sale_id}")
-        return "", 200
-
-    sale_info = process_sale_data(sale_response)
-    if not sale_info:
-        print(f"[Automatiq] Could not parse sale {sale_id}")
-        return "", 200
-
-    # Find matching sheet location
-    location = find_sheet_location(sale_info)
-    if not location:
-        print(f"[Automatiq] No sheet row found for sale {sale_id} — skipping WhatsApp.")
-        return "", 200
-
-    season, tab, row_idx, worksheet = location
-
-    # Build and send WhatsApp
-    msg = build_whatsapp_message(sale_info, season, tab, row_idx)
-
-    # Only send WhatsApp if no other sale is pending (queue them)
-    was_empty = len(pending_sales) == 0
-    pending_sales[sale_id] = {
-        "sale_info":  sale_info,
-        "season":     season,
-        "tab":        tab,
-        "row_idx":    row_idx,
-        "message":    msg,
-    }
-
-    if was_empty:
-        send_whatsapp(msg)
-        print(f"[Automatiq] WhatsApp sent for {sale_id} ({tab} row {row_idx + 1})")
-    else:
-        print(f"[Automatiq] Sale {sale_id} queued ({len(pending_sales)} pending)")
-
-    return "", 200
+    except Exception as e:
+        import traceback
+        tb = traceback.format_exc()
+        print(f"[Automatiq] UNHANDLED ERROR: {e}\n{tb}")
+        return {"error": str(e), "traceback": tb}, 500
 
 
 # ─── Twilio reply endpoint ────────────────────────────────────────────────────
